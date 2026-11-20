@@ -1,8 +1,81 @@
+import { ChannelType, Client, Events, GatewayIntentBits, Partials, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import 'dotenv/config';
-import { Client, Events, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 
 const channelId = process.env.DISCORD_CHANNEL_ID;
 const token = process.env.DISCORD_TOKEN;
+const memberDisplayRoles = ['Chief Pilot', 'Captain', 'First Officer'];
+const memberLicenceRoles = [
+  ['Private', 'PPL'],
+  ['Night', 'NIGHT'],
+  ['Instrument', 'IFR'],
+  ['Commercial', 'CPL'],
+  ['Multi-Engine', 'ME'],
+  ['Jet', 'JET'],
+  ['Airline Transport', 'ATP'],
+  ['Heavy Jet', 'HVY'],
+  ['Helicopter', 'HELI'],
+  ['Twin-Turbine', 'TWIN-H'],
+  ['Heavy-Lift', 'LIFT'],
+  ['Tiltrotor', 'TILT'],
+  ['Seaplane', 'SEA'],
+];
+const licenceReactionEmojis = [
+  '🪪',
+  '🌙',
+  '🧭',
+  '💼',
+  '⚙️',
+  '✈️',
+  '🛬',
+  '🛫',
+  '🚁',
+  '🔩',
+  '🏗️',
+  '🛸',
+  '🌊',
+];
+const legacyLicenceReactionEmojis = {
+  HVY: '\u0031\uFE0F\u20E3',
+  ATP: '\u0032\uFE0F\u20E3',
+  JET: '\u0033\uFE0F\u20E3',
+  ME: '\u0034\uFE0F\u20E3',
+  CPL: '\u0035\uFE0F\u20E3',
+  IFR: '\u0036\uFE0F\u20E3',
+  NIGHT: '\u0037\uFE0F\u20E3',
+  PPL: '\u0038\uFE0F\u20E3',
+  HELI: '\u0039\uFE0F\u20E3',
+  'TWIN-H': '\u0030\uFE0F\u20E3',
+  LIFT: '\u{1F51F}',
+  SEA: '\u{1F170}\uFE0F',
+};
+const licencePanelHeader = '🚆 **Welcome to NJ Transit!** ✈️';
+const legacyLicencePanelHeader = '**Licence roles**';
+const licencePanelOptions = memberLicenceRoles.map(([roleName, abbreviation], index) => ({
+  roleName,
+  abbreviation,
+  emoji: licenceReactionEmojis[index],
+  legacyEmoji: legacyLicenceReactionEmojis[abbreviation],
+}));
+const licenceDescriptions = {
+  PPL: 'Private Pilot License',
+  NIGHT: 'Night Rating',
+  IFR: 'Instrument Rating',
+  CPL: 'Commercial Pilot License',
+  ME: 'Multi-Engine Rating',
+  JET: 'Jet Type Rating',
+  ATP: 'Airline Transport Pilot',
+  HVY: 'Heavy Jet Rating',
+  HELI: 'Helicopter License',
+  'TWIN-H': 'Twin-Turbine Rating',
+  LIFT: 'Heavy-Lift Rating',
+  TILT: 'Tiltrotor Rating',
+  SEA: 'Seaplane Rating',
+};
+const notificationRoleOptions = [
+  { roleName: 'Plane Shop Refresh', emoji: '🔔', description: 'Daily plane shop refresh' },
+  { roleName: 'Global Event Reset', emoji: '🌍', description: 'Sunday event preview and Monday reset' },
+];
+const notificationPanelHeader = '🔔 **NJ Transit Notification Roles**';
 
 if (!token) {
   throw new Error('DISCORD_TOKEN must be set');
@@ -12,7 +85,14 @@ if (!channelId) {
   throw new Error('DISCORD_CHANNEL_ID must be set');
 }
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessageReactions,
+  ],
+  partials: [Partials.Channel, Partials.Message, Partials.Reaction],
+});
 
 client.once(Events.ClientReady, async (readyClient) => {
   try {
@@ -37,14 +117,42 @@ client.once(Events.ClientReady, async (readyClient) => {
         .setName('members')
         .setDescription('Shows server members and their roles')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .addStringOption(option => option
+          .setName('licence')
+          .setDescription('Filter members by licence abbreviation')
+          .addChoices(...memberLicenceRoles.map(([, abbreviation]) => ({
+            name: abbreviation,
+            value: abbreviation,
+          })))
+          .setRequired(false))
         .addIntegerOption(option => option
           .setName('page')
           .setDescription('Page of the member list to show')
           .setMinValue(1)
           .setRequired(false))
         .toJSON(),
+      new SlashCommandBuilder()
+        .setName('licences')
+        .setDescription('Create a reaction panel for licence roles')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .addChannelOption(option => option
+          .setName('channel')
+          .setDescription('Channel where the licence panel will be posted')
+          .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+          .setRequired(true))
+        .toJSON(),
+      new SlashCommandBuilder()
+        .setName('notifications')
+        .setDescription('Create a reaction panel for notification roles')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .addChannelOption(option => option
+          .setName('channel')
+          .setDescription('Channel where the notification panel will be posted')
+          .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+          .setRequired(true))
+        .toJSON(),
     ]);
-    console.log('Registered /ping, /when, /table, /global, and /global-table commands');
+    console.log('Registered /ping, /when, /table, /global, /members, /licences, and /notifications commands');
   } catch (error) {
     console.error('Failed to register commands:', error);
   }
@@ -66,7 +174,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   } else if (interaction.commandName === 'when') {
     try {
       const now = new Date();
-      
+
       // Plane shop refresh (daily at 00:00 UTC)
       const nextMidnightUtc = new Date(now);
       nextMidnightUtc.setUTCHours(24, 0, 0, 0);
@@ -101,12 +209,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!globalRes.ok) throw new Error(`API returned ${globalRes.status}`);
       const globalData = await globalRes.json();
 
-      const topCompany = usData.cos[usData.list[0].id];
-      const accentColor = topCompany?.paint?.accent || '#2f6fd0';
-      const embed = new EmbedBuilder()
-        .setTitle('Pocket Planes Leaderboards')
-        .setColor(accentColor);
-
       // US Table
       let usDescription = 'US Leaderboard\n```\n';
       for (let i = 0; i < Math.min(15, usData.list.length); i++) {
@@ -133,12 +235,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       globalDescription += '```';
 
-      embed.addFields(
-        { name: '\u200b', value: globalDescription },
-        { name: '\u200b', value: usDescription }
+      await interaction.editReply(
+        `**Pocket Planes Leaderboards**\n\n${globalDescription}\n\n${usDescription}`
       );
-
-      await interaction.editReply({ embeds: [embed] });
     } catch (error) {
       console.error('Failed to fetch leaderboards:', error);
       await interaction.editReply('Failed to fetch leaderboard data.');
@@ -157,27 +256,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const cos = tableJson.cos;
 
       const progress = Math.round((event.units / event.goal) * 100);
-      const embed = new EmbedBuilder()
-        .setTitle(event.name)
-        .setColor('#2f6fd0')
-        .setDescription(event.blurb)
-        .addFields(
-          { name: 'Goal', value: `${event.goal.toLocaleString()} ${event.unit}`, inline: true },
-          { name: 'Progress', value: `${event.units.toLocaleString()} / ${event.goal.toLocaleString()} (${progress}%)`, inline: true },
-          { name: 'Contributors', value: event.pilots.toLocaleString(), inline: true }
-        );
-
-      let topText = '';
-      for (let i = 0; i < Math.min(5, event.top.length); i++) {
-        const company = cos[event.top[i].id];
-        const rank = i + 1;
+      const topText = event.top.slice(0, 5).map((pilot, index) => {
+        const company = cos[pilot.id];
         const tag = company?.tag || 'N/A';
-        const units = event.top[i].units.toLocaleString();
-        topText += `${rank}. **${tag}** - ${units} ${event.unit}\n`;
-      }
-      embed.addFields({ name: 'Top Contributors', value: topText });
+        return `${index + 1}. **${tag}** - ${pilot.units.toLocaleString()} ${event.unit}`;
+      }).join('\n') || 'No contributors yet.';
 
-      await interaction.editReply({ embeds: [embed] });
+      await interaction.editReply([
+        `**${event.name}**`,
+        event.blurb,
+        `**Goal:** ${event.goal.toLocaleString()} ${event.unit}`,
+        `**Progress:** ${event.units.toLocaleString()} / ${event.goal.toLocaleString()} ${event.unit} (${progress}%)`,
+        `**Contributors:** ${event.pilots.toLocaleString()}`,
+        '**Top Contributors**',
+        topText,
+      ].join('\n\n'));
     } catch (error) {
       console.error('Failed to fetch global event:', error);
       await interaction.editReply('Failed to fetch global event data.');
@@ -188,12 +281,34 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply();
     try {
-      const members = await interaction.guild.members.fetch();
-      const sortedMembers = [...members.values()].sort((left, right) =>
-        left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' })
-      );
+      const members = [];
+      let after;
+      while (true) {
+        const batch = await interaction.guild.members.list({ limit: 1000, after, cache: false });
+        members.push(...batch.values());
+        if (batch.size < 1000) break;
+        after = batch.last().id;
+      }
+      const selectedLicence = interaction.options.getString('licence');
+      const selectedLicenceRole = memberLicenceRoles.find(([, abbreviation]) =>
+        abbreviation === selectedLicence
+      )?.[0];
+      const sortedMembers = members
+        .filter(member => memberDisplayRoles.some(roleName =>
+          member.roles.cache.some(role => role.name === roleName)
+        ) && (!selectedLicenceRole || member.roles.cache.some(role => role.name === selectedLicenceRole)))
+        .sort((left, right) =>
+          left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' })
+        );
+
+      if (sortedMembers.length === 0) {
+        const filterMessage = selectedLicence ? ` and licence ${selectedLicence}` : '';
+        await interaction.editReply(`No members with the listed roles${filterMessage} were found.`);
+        return;
+      }
+
       const pageSize = 20;
       const page = interaction.options.getInteger('page') ?? 1;
       const totalPages = Math.max(1, Math.ceil(sortedMembers.length / pageSize));
@@ -207,30 +322,242 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .slice((page - 1) * pageSize, page * pageSize)
         .map(member => {
           const name = member.displayName.replace(/[\r\n`]/g, ' ').slice(0, 24);
-          const roles = member.roles.cache
-            .filter(role => role.id !== interaction.guild.id)
-            .map(role => role.name)
+          const roles = memberDisplayRoles
+            .filter(roleName => member.roles.cache.some(role => role.name === roleName))
+            .join(', ');
+          const licences = memberLicenceRoles
+            .filter(([roleName]) => member.roles.cache.some(role => role.name === roleName))
+            .map(([, abbreviation]) => abbreviation)
             .join(', ') || 'None';
-          return `${name.padEnd(24)}  ${roles.replace(/[\r\n`]/g, ' ').slice(0, 72)}`;
+          return `${name.padEnd(24)}  ${roles.padEnd(36)}  ${licences}`;
         });
 
       const table = [
-        `${'User'.padEnd(24)}  Roles`,
-        '-'.repeat(98),
+        `${'User'.padEnd(24)}  ${'Roles'.padEnd(36)}  Licences`,
+        '-'.repeat(80),
         ...rows,
       ].join('\n');
-      const embed = new EmbedBuilder()
-        .setTitle('Server Members and Roles')
-        .setDescription(`Page ${page}/${totalPages}\n\`\`\`\n${table}\n\`\`\``)
-        .setFooter({ text: `${sortedMembers.length} members` });
-
-      await interaction.editReply({ embeds: [embed] });
+      await interaction.editReply(
+        `**Server Members and Roles${selectedLicence ? ` (${selectedLicence})` : ''}** (Page ${page}/${totalPages})\n\`\`\`\n${table}\n\`\`\`\n${sortedMembers.length} members`
+      );
     } catch (error) {
       console.error('Failed to fetch server members:', error);
       await interaction.editReply('Failed to fetch server members.');
     }
+  } else if (interaction.commandName === 'licences') {
+    if (!interaction.inGuild() || !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+      await interaction.reply({ content: 'Administrator permission is required.', ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const guild = interaction.guild;
+      const channel = interaction.options.getChannel('channel', true);
+      const botMember = guild.members.me ?? await guild.members.fetchMe();
+      const channelPermissions = channel.permissionsFor(botMember);
+      const requiredChannelPermissions = [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.AddReactions,
+      ];
+
+      if (!channelPermissions?.has(requiredChannelPermissions)) {
+        await interaction.editReply('I need View Channel, Send Messages, Read Message History, and Add Reactions in that channel.');
+        return;
+      }
+
+      if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
+        await interaction.editReply('I need the Manage Roles permission to assign licence roles.');
+        return;
+      }
+
+      const roleOptions = licencePanelOptions.map(option => ({
+        ...option,
+        role: guild.roles.cache.find(role => role.name === option.roleName),
+      }));
+      const missingRoles = roleOptions.filter(option => !option.role);
+      if (missingRoles.length > 0) {
+        await interaction.editReply(`These server roles were not found: ${missingRoles.map(option => option.roleName).join(', ')}`);
+        return;
+      }
+
+      const unmanageableRoles = roleOptions.filter(option =>
+        botMember.roles.highest.comparePositionTo(option.role) <= 0
+      );
+      if (unmanageableRoles.length > 0) {
+        await interaction.editReply(`Move my bot role above these roles: ${unmanageableRoles.map(option => option.roleName).join(', ')}`);
+        return;
+      }
+
+      const panelContent = [
+        licencePanelHeader,
+        '',
+        "Welcome aboard **NJ Transit**, a growing airline company in Pocket Pilots! Whether you're a seasoned pilot or just getting your wings, we're excited to have you join our team.",
+        '',
+        'Our goal is to build a successful airline together, expand our operations, and help each other grow along the way!',
+        '',
+        '🛫 **Ready to join the fleet?**',
+        '- **Company Name:** NJ Transit',
+        '- **Company Code:** `EANRZA`',
+        '',
+        '🪪 **Pilot Licenses & Reaction Roles**',
+        '',
+        'React with the corresponding emoji to show which licenses you have earned. Select all licenses you currently hold and update your roles as you advance!',
+        ...licencePanelOptions.map(option => `${option.emoji} **${option.abbreviation}** - ${licenceDescriptions[option.abbreviation]}`),
+        '',
+        'All pilots are welcome, regardless of experience. Join us, take to the skies, and help make NJ Transit a success!',
+        '',
+        '**Fly together. Grow together. Welcome aboard!** 🛩️',
+      ].join('\n');
+      let panelMessage;
+      try {
+        panelMessage = await channel.send(panelContent);
+        for (const option of licencePanelOptions) {
+          await panelMessage.react(option.emoji);
+        }
+      } catch (error) {
+        await panelMessage?.delete().catch(() => { });
+        throw error;
+      }
+
+      await interaction.editReply(`Licence role panel created in ${channel}: ${panelMessage.url}`);
+    } catch (error) {
+      console.error('Failed to create licence role panel:', error);
+      await interaction.editReply('Failed to create the licence role panel. Check the bot permissions and role hierarchy.');
+    }
+  } else if (interaction.commandName === 'notifications') {
+    if (!interaction.inGuild() || !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+      await interaction.reply({ content: 'Administrator permission is required.', ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const guild = interaction.guild;
+      const panelChannel = interaction.options.getChannel('channel', true);
+      const botMember = guild.members.me ?? await guild.members.fetchMe();
+      const panelPermissions = panelChannel.permissionsFor(botMember);
+      const requiredPanelPermissions = [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.AddReactions,
+      ];
+
+      if (!panelPermissions?.has(requiredPanelPermissions)) {
+        await interaction.editReply('I need View Channel, Send Messages, Read Message History, and Add Reactions in the panel channel.');
+        return;
+      }
+
+      if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
+        await interaction.editReply('I need the Manage Roles permission to create and assign notification roles.');
+        return;
+      }
+
+      const notificationChannel = await guild.channels.fetch(channelId);
+      if (!notificationChannel) {
+        await interaction.editReply('The configured notification channel was not found in this server.');
+        return;
+      }
+      const notificationPermissions = notificationChannel.permissionsFor(botMember);
+      if (!notificationPermissions?.has([
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.MentionEveryone,
+      ])) {
+        await interaction.editReply('I need View Channel, Send Messages, and Mention @everyone, @here, and All Roles in the configured notification channel.');
+        return;
+      }
+
+      const roles = [];
+      for (const option of notificationRoleOptions) {
+        const role = guild.roles.cache.find(candidate => candidate.name === option.roleName)
+          ?? await guild.roles.create({
+            name: option.roleName,
+            reason: 'Create opt-in notification role',
+          });
+        if (botMember.roles.highest.comparePositionTo(role) <= 0) {
+          await interaction.editReply(`Move my bot role above ${role.name}.`);
+          return;
+        }
+        roles.push({ ...option, role });
+      }
+
+      const panelContent = [
+        notificationPanelHeader,
+        '',
+        'React to opt in to a notification. Remove your reaction to opt out.',
+        ...roles.map(option => `${option.emoji} **${option.role.name}** - ${option.description}`),
+      ].join('\n');
+      let panelMessage;
+      try {
+        panelMessage = await panelChannel.send(panelContent);
+        for (const option of roles) {
+          await panelMessage.react(option.emoji);
+        }
+      } catch (error) {
+        await panelMessage?.delete().catch(() => {});
+        throw error;
+      }
+
+      await interaction.editReply(`Notification role panel created in ${panelChannel}: ${panelMessage.url}`);
+    } catch (error) {
+      console.error('Failed to create notification role panel:', error);
+      await interaction.editReply('Failed to create the notification role panel. Check the bot permissions and role hierarchy.');
+    }
   }
 });
+
+async function updateReactionRole(reaction, user, shouldHaveRole) {
+  if (user.bot) return;
+  if (reaction.partial) await reaction.fetch();
+
+  const message = reaction.message.partial ? await reaction.message.fetch() : reaction.message;
+  if (!message.guild || message.author?.id !== client.user.id) return;
+
+  const isLicencePanel = message.content.startsWith(licencePanelHeader) ||
+    message.content.startsWith(legacyLicencePanelHeader);
+  const isNotificationPanel = message.content.startsWith(notificationPanelHeader);
+  if (!isLicencePanel && !isNotificationPanel) return;
+
+  const options = isLicencePanel ? licencePanelOptions : notificationRoleOptions;
+  const option = options.find(candidate =>
+    candidate.emoji === reaction.emoji.name || candidate.legacyEmoji === reaction.emoji.name
+  );
+  if (!option) return;
+
+  const role = message.guild.roles.cache.find(candidate => candidate.name === option.roleName);
+  if (!role) return;
+
+  const member = await message.guild.members.fetch({ user: user.id, force: true });
+  if (shouldHaveRole && !member.roles.cache.has(role.id)) {
+    await member.roles.add(role, 'Licence role selected from the reaction panel');
+  } else if (!shouldHaveRole && member.roles.cache.has(role.id)) {
+    await member.roles.remove(role, 'Licence role deselected from the reaction panel');
+  }
+}
+
+client.on(Events.MessageReactionAdd, (reaction, user) => {
+  updateReactionRole(reaction, user, true).catch(error => {
+    console.error('Failed to assign reaction role:', error);
+  });
+});
+
+client.on(Events.MessageReactionRemove, (reaction, user) => {
+  updateReactionRole(reaction, user, false).catch(error => {
+    console.error('Failed to remove reaction role:', error);
+  });
+});
+
+async function sendNotification(channel, roleName, message) {
+  const role = channel.guild.roles.cache.find(candidate => candidate.name === roleName);
+  await channel.send({
+    content: `${role ? `${role} ` : ''}${message}`,
+    allowedMentions: { roles: role ? [role.id] : [] },
+  });
+}
 
 function scheduleDailyMessage() {
   const now = new Date();
@@ -242,7 +569,7 @@ function scheduleDailyMessage() {
     try {
       const channel = client.channels.cache.get(channelId);
       if (channel) {
-        await channel.send('Plane shop has refreshed!');
+        await sendNotification(channel, 'Plane Shop Refresh', 'Plane shop has refreshed!');
         console.log('Sent daily plane shop refresh message');
       } else {
         console.error(`Channel ${channelId} not found in cache`);
@@ -252,6 +579,60 @@ function scheduleDailyMessage() {
     }
 
     scheduleDailyMessage();
+  }, delay);
+}
+
+function scheduleWeeklyResetMessage() {
+  const now = new Date();
+  const nextMonday = new Date(now);
+  const daysUntilMonday = (1 - now.getUTCDay() + 7) % 7 || 7;
+  nextMonday.setUTCDate(nextMonday.getUTCDate() + daysUntilMonday);
+  nextMonday.setUTCHours(0, 0, 0, 0);
+
+  const delay = nextMonday.getTime() - now.getTime();
+  setTimeout(async () => {
+    try {
+      const channel = client.channels.cache.get(channelId);
+      if (channel) {
+        await sendNotification(channel, 'Global Event Reset', 'The global event has reset!');
+        console.log('Sent weekly global event reset message');
+      } else {
+        console.error(`Channel ${channelId} not found in cache`);
+      }
+    } catch (error) {
+      console.error('Failed to send weekly global event reset message:', error);
+    }
+
+    scheduleWeeklyResetMessage();
+  }, delay);
+}
+
+function scheduleGlobalEventPreviewMessage() {
+  const now = new Date();
+  const nextSunday = new Date(now);
+  const daysUntilSunday = (7 - now.getUTCDay()) % 7 || 7;
+  nextSunday.setUTCDate(nextSunday.getUTCDate() + daysUntilSunday);
+  nextSunday.setUTCHours(0, 0, 0, 0);
+
+  const delay = nextSunday.getTime() - now.getTime();
+  setTimeout(async () => {
+    try {
+      const channel = client.channels.cache.get(channelId);
+      if (channel) {
+        await sendNotification(
+          channel,
+          'Global Event Reset',
+          'The next global event preview is available! The event resets in 24 hours.'
+        );
+        console.log('Sent global event preview notification');
+      } else {
+        console.error(`Channel ${channelId} not found in cache`);
+      }
+    } catch (error) {
+      console.error('Failed to send global event preview notification:', error);
+    }
+
+    scheduleGlobalEventPreviewMessage();
   }, delay);
 }
 
@@ -265,7 +646,9 @@ async function startBot() {
   }
 
   scheduleDailyMessage();
-  console.log('Daily plane shop refresh message scheduled for 00:00 UTC');
+  scheduleWeeklyResetMessage();
+  scheduleGlobalEventPreviewMessage();
+  console.log('Daily plane shop refresh, global event preview, and weekly reset messages scheduled');
 }
 
 startBot();
