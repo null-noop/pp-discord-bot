@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Client, Events, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { Client, Events, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 
 const channelId = process.env.DISCORD_CHANNEL_ID;
 const token = process.env.DISCORD_TOKEN;
@@ -12,7 +12,7 @@ if (!channelId) {
   throw new Error('DISCORD_CHANNEL_ID must be set');
 }
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
 
 client.once(Events.ClientReady, async (readyClient) => {
   try {
@@ -32,6 +32,16 @@ client.once(Events.ClientReady, async (readyClient) => {
       new SlashCommandBuilder()
         .setName('global')
         .setDescription('Shows current global event details and top contributors')
+        .toJSON(),
+      new SlashCommandBuilder()
+        .setName('members')
+        .setDescription('Shows server members and their roles')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .addIntegerOption(option => option
+          .setName('page')
+          .setDescription('Page of the member list to show')
+          .setMinValue(1)
+          .setRequired(false))
         .toJSON(),
     ]);
     console.log('Registered /ping, /when, /table, /global, and /global-table commands');
@@ -171,6 +181,53 @@ client.on(Events.InteractionCreate, async (interaction) => {
     } catch (error) {
       console.error('Failed to fetch global event:', error);
       await interaction.editReply('Failed to fetch global event data.');
+    }
+  } else if (interaction.commandName === 'members') {
+    if (!interaction.inGuild() || !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+      await interaction.reply({ content: 'Administrator permission is required.', ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const members = await interaction.guild.members.fetch();
+      const sortedMembers = [...members.values()].sort((left, right) =>
+        left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' })
+      );
+      const pageSize = 20;
+      const page = interaction.options.getInteger('page') ?? 1;
+      const totalPages = Math.max(1, Math.ceil(sortedMembers.length / pageSize));
+
+      if (page > totalPages) {
+        await interaction.editReply(`There are ${totalPages} page(s) of members.`);
+        return;
+      }
+
+      const rows = sortedMembers
+        .slice((page - 1) * pageSize, page * pageSize)
+        .map(member => {
+          const name = member.displayName.replace(/[\r\n`]/g, ' ').slice(0, 24);
+          const roles = member.roles.cache
+            .filter(role => role.id !== interaction.guild.id)
+            .map(role => role.name)
+            .join(', ') || 'None';
+          return `${name.padEnd(24)}  ${roles.replace(/[\r\n`]/g, ' ').slice(0, 72)}`;
+        });
+
+      const table = [
+        `${'User'.padEnd(24)}  Roles`,
+        '-'.repeat(98),
+        ...rows,
+      ].join('\n');
+      const embed = new EmbedBuilder()
+        .setTitle('Server Members and Roles')
+        .setDescription(`Page ${page}/${totalPages}\n\`\`\`\n${table}\n\`\`\``)
+        .setFooter({ text: `${sortedMembers.length} members` });
+
+      await interaction.editReply({ embeds: [embed] });
+    } catch (error) {
+      console.error('Failed to fetch server members:', error);
+      await interaction.editReply('Failed to fetch server members.');
     }
   }
 });
