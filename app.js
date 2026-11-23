@@ -104,6 +104,10 @@ const client = new Client({
   partials: [Partials.Channel, Partials.Message, Partials.Reaction],
 });
 
+client.on('error', error => {
+  console.error('Discord client error:', error);
+});
+
 client.once(Events.ClientReady, async (readyClient) => {
   try {
     await readyClient.application.commands.set([
@@ -190,7 +194,8 @@ client.once(Events.ClientReady, async (readyClient) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  if (interaction.isAutocomplete()) {
+  try {
+    if (interaction.isAutocomplete()) {
     if (!['plane'].includes(interaction.commandName)) return;
     const focused = interaction.options.getFocused().trim().toLowerCase();
     const choices = planeData.planes
@@ -200,7 +205,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       .map(plane => ({ name: plane.name, value: plane.name }));
     await interaction.respond(choices);
     return;
-  }
+    }
 
   if (!interaction.isChatInputCommand()) {
     return;
@@ -354,14 +359,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
       ['License', plane.licenseDisplay, comparedPlane.licenseDisplay],
       ['Price', plane.price, comparedPlane.price],
       ['Restoring', plane.restorationCost ?? 'Not applicable', comparedPlane.restorationCost ?? 'Not applicable'],
-      ['Wiki', plane.wikiUrl ? `[View](${plane.wikiUrl})` : 'Unavailable', comparedPlane.wikiUrl ? `[View](${comparedPlane.wikiUrl})` : 'Unavailable'],
     ];
+
+    const metricWidth = Math.max(7, ...rows.map(([metric]) => metric.length));
+    const leftWidth = Math.max(plane.name.length, ...rows.map(([, left]) => String(left ?? 'N/A').length));
+    const rightWidth = Math.max(comparedPlane.name.length, ...rows.map(([, , right]) => String(right ?? 'N/A').length));
+    const pad = (value, width) => String(value).padEnd(width, ' ');
+
     const table = [
-      `Metric | ${plane.name} | ${comparedPlane.name}`,
-      '--- | --- | ---',
-      ...rows.map(([metric, left, right]) => `${metric} | ${left ?? 'N/A'} | ${right ?? 'N/A'}`),
+      ` ${pad('Metric', metricWidth)} | ${pad(plane.name, leftWidth)} | ${pad(comparedPlane.name, rightWidth)} `,
+      `-${'-'.repeat(metricWidth)}-|-${'-'.repeat(leftWidth)}-|-${'-'.repeat(rightWidth)}-`,
+      ...rows.map(([metric, left, right]) =>
+        ` ${pad(metric, metricWidth)} | ${pad(left ?? 'N/A', leftWidth)} | ${pad(right ?? 'N/A', rightWidth)} `
+      ),
     ].join('\n');
-    await interaction.reply(table);
+
+    const wikiLinks = [
+      plane.wikiUrl ? `[${plane.name}](${plane.wikiUrl})` : plane.name,
+      comparedPlane.wikiUrl ? `[${comparedPlane.name}](${comparedPlane.wikiUrl})` : comparedPlane.name,
+    ].join(' | ');
+    await interaction.reply(`\`\`\`text\n${table}\n\`\`\`\n**Wiki:** ${wikiLinks}`);
   } else if (interaction.commandName === 'fleet-refresh') {
     if (!interaction.inGuild() || !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
       await interaction.reply({ content: 'Administrator permission is required.', ephemeral: true });
@@ -609,6 +626,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       console.error('Failed to create notification role panel:', error);
       await interaction.editReply('Failed to create the notification role panel. Check the bot permissions and role hierarchy.');
     }
+  }
+  } catch (error) {
+    if (error?.code === 10062) {
+      console.warn('Ignored an expired Discord interaction');
+      return;
+    }
+    console.error('Failed to handle Discord interaction:', error);
   }
 });
 
