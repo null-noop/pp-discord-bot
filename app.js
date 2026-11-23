@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { ChannelType, Client, Events, GatewayIntentBits, Partials, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import 'dotenv/config';
+import { FLEET_DATA_PATH, refreshFleet } from './scripts/scrape-fleet.js';
 
 const channelId = process.env.DISCORD_CHANNEL_ID;
 const token = process.env.DISCORD_TOKEN;
@@ -76,6 +78,14 @@ const notificationRoleOptions = [
   { roleName: 'Global Event Reset', emoji: '🌍', description: 'Sunday event preview and Monday reset' },
 ];
 const notificationPanelHeader = '🔔 **NJ Transit Notification Roles**';
+let planeData = JSON.parse(readFileSync(FLEET_DATA_PATH, 'utf8'));
+
+function findPlane(name) {
+  const normalized = name.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  return planeData.planes.find(plane =>
+    plane.name.toLowerCase().replace(/[^a-z0-9]/g, '') === normalized
+  );
+}
 
 if (!token) {
   throw new Error('DISCORD_TOKEN must be set');
@@ -112,6 +122,25 @@ client.once(Events.ClientReady, async (readyClient) => {
       new SlashCommandBuilder()
         .setName('global')
         .setDescription('Shows current global event details and top contributors')
+        .toJSON(),
+      new SlashCommandBuilder()
+        .setName('plane')
+        .setDescription('Shows aircraft details or compares two planes')
+        .addStringOption(option => option
+          .setName('name')
+          .setDescription('Aircraft name')
+          .setRequired(true)
+          .setAutocomplete(true))
+        .addStringOption(option => option
+          .setName('compare')
+          .setDescription('Second aircraft to compare')
+          .setRequired(false)
+          .setAutocomplete(true))
+        .toJSON(),
+      new SlashCommandBuilder()
+        .setName('fleet-refresh')
+        .setDescription('Refresh the fleet data from the NimbleBit wiki')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .toJSON(),
       new SlashCommandBuilder()
         .setName('members')
@@ -152,7 +181,7 @@ client.once(Events.ClientReady, async (readyClient) => {
           .setRequired(true))
         .toJSON(),
     ]);
-    console.log('Registered /ping, /when, /table, /global, /members, /licences, and /notifications commands');
+    console.log('Registered /ping, /when, /table, /global, /plane, /fleet-refresh, /members, /licences, and /notifications commands');
   } catch (error) {
     console.error('Failed to register commands:', error);
   }
@@ -161,6 +190,18 @@ client.once(Events.ClientReady, async (readyClient) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isAutocomplete()) {
+    if (!['plane'].includes(interaction.commandName)) return;
+    const focused = interaction.options.getFocused().trim().toLowerCase();
+    const choices = planeData.planes
+      .filter(plane => plane.name.toLowerCase().includes(focused))
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .slice(0, 25)
+      .map(plane => ({ name: plane.name, value: plane.name }));
+    await interaction.respond(choices);
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) {
     return;
   }
@@ -274,6 +315,67 @@ client.on(Events.InteractionCreate, async (interaction) => {
     } catch (error) {
       console.error('Failed to fetch global event:', error);
       await interaction.editReply('Failed to fetch global event data.');
+    }
+  } else if (interaction.commandName === 'plane') {
+    const name = interaction.options.getString('name', true);
+    const compareName = interaction.options.getString('compare');
+    const plane = findPlane(name);
+
+    if (!plane) {
+      await interaction.reply({ content: `No aircraft named **${name}** was found.`, ephemeral: true });
+      return;
+    }
+
+    if (!compareName) {
+      await interaction.reply([
+        `**${plane.name}**`,
+        `**Seats:** ${plane.seats ?? 'N/A'}  **Cargo:** ${plane.cargoDisplay}`,
+        `**Speed:** ${plane.speedDisplay}  **Range:** ${plane.rangeDisplay}`,
+        `**Runway:** ${plane.runway}  **License:** ${plane.licenseDisplay}`,
+        `**Price:** ${plane.price}`,
+        ...(plane.restorationCost ? [`**Restoring:** ${plane.restorationCost}`] : []),
+        ...(plane.wikiUrl ? [`**Wiki:** ${plane.wikiUrl}`] : []),
+      ].join('\n'));
+      return;
+    }
+
+    const comparedPlane = findPlane(compareName);
+    if (!comparedPlane) {
+      await interaction.reply({ content: `No aircraft named **${compareName}** was found.`, ephemeral: true });
+      return;
+    }
+
+    const rows = [
+      ['Seats', plane.seats, comparedPlane.seats],
+      ['Cargo', plane.cargoDisplay, comparedPlane.cargoDisplay],
+      ['Speed', plane.speedDisplay, comparedPlane.speedDisplay],
+      ['Range', plane.rangeDisplay, comparedPlane.rangeDisplay],
+      ['Runway', plane.runway, comparedPlane.runway],
+      ['License', plane.licenseDisplay, comparedPlane.licenseDisplay],
+      ['Price', plane.price, comparedPlane.price],
+      ['Restoring', plane.restorationCost ?? 'Not applicable', comparedPlane.restorationCost ?? 'Not applicable'],
+      ['Wiki', plane.wikiUrl ? `[View](${plane.wikiUrl})` : 'Unavailable', comparedPlane.wikiUrl ? `[View](${comparedPlane.wikiUrl})` : 'Unavailable'],
+    ];
+    const table = [
+      `Metric | ${plane.name} | ${comparedPlane.name}`,
+      '--- | --- | ---',
+      ...rows.map(([metric, left, right]) => `${metric} | ${left ?? 'N/A'} | ${right ?? 'N/A'}`),
+    ].join('\n');
+    await interaction.reply(table);
+  } else if (interaction.commandName === 'fleet-refresh') {
+    if (!interaction.inGuild() || !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+      await interaction.reply({ content: 'Administrator permission is required.', ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+    try {
+      const fleet = await refreshFleet();
+      planeData = fleet;
+      await interaction.editReply(`Fleet data refreshed: ${fleet.planes.length} aircraft updated.`);
+    } catch (error) {
+      console.error('Failed to refresh fleet data:', error);
+      await interaction.editReply(`Fleet refresh failed: ${error.message}`);
     }
   } else if (interaction.commandName === 'members') {
     if (!interaction.inGuild() || !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {

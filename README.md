@@ -24,3 +24,15 @@ An administrator can run `/notifications channel:#roles` to create the **Plane S
 The Compose service restarts automatically unless stopped. The bot sends at the next 00:00 UTC after startup and does not send catch-up messages if it was offline at midnight. To run it directly with Node.js instead, install dependencies with `npm install` and use `npm start`.
 
 The bot also registers a `/ping` slash command, which replies `Pong!`, and an administrator-only `/members` command that posts a text table of members with the Chief Pilot, Captain, or First Officer role. Listed licence roles appear by abbreviation, with up to 20 members per page. Choose a licence abbreviation to filter, such as `/members licence:HVY`, or use `/members page:2` to view another page.
+
+## Aircraft data
+
+Use `/plane name:Sparrow` to show an aircraft's seats, cargo, speed, range, runway, licence, and price. Barn finds also show their restoration cost and expected duration, and responses include a link to the aircraft's wiki page. Add `compare:Skylark` to compare two aircraft in a table.
+
+Fleet data is stored in `data/fleet.json`. Refresh it manually with:
+
+```sh
+npm run refresh-fleet
+```
+
+A server administrator can also run `/fleet-refresh` while the bot is running. Both methods scrape the NimbleBit fleet wiki and replace the local snapshot atomically. Restarting the bot is not required after an in-bot refresh; restart it after refreshing through the command line so it reloads the updated file.

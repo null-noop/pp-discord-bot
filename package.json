@@ -10,7 +10,8 @@
   },
   "scripts": {
     "start": "node app.js",
-    "dev": "nodemon app.js"
+    "dev": "nodemon app.js",
+    "refresh-fleet": "node scripts/scrape-fleet.js"
   },
   "license": "MIT",
   "dependencies": {
